@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# lean-init [TOOLCHAIN]: one-time (and idempotent) setup inside the container.
+#   1. installs elan into $ELAN_HOME if it is missing;
+#   2. installs TOOLCHAIN (default: $LEAN_TOOLCHAIN, else leanprover/lean4:v4.36.0);
+#   3. creates the scratch project ~/work/scratch with `lake new scratch math`, which pins
+#      Mathlib to the tag matching the toolchain and downloads its cache.
+# Existing pieces are left alone, so rerunning is safe.
+set -euo pipefail
+
+tc=${1:-${LEAN_TOOLCHAIN:-leanprover/lean4:v4.36.0}}
+work=${LEAN_WORK:-$HOME/work}
+: "${ELAN_HOME:=$HOME/.elan}"
+export PATH=$ELAN_HOME/bin:$PATH
+
+if ! command -v elan >/dev/null; then
+    echo "== installing elan into $ELAN_HOME"
+    tmp=$(mktemp -d)
+    curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$tmp/elan-init.sh"
+    sh "$tmp/elan-init.sh" -y --no-modify-path --default-toolchain none
+    rm -rf "$tmp"
+fi
+elan --version
+
+if ! elan toolchain list | grep -qxF "$tc"; then
+    echo "== installing toolchain $tc"
+    elan toolchain install "$tc"
+fi
+
+mkdir -p "$work/runs" "$work/host-runs" "$work/repos"
+if [[ ! -f $work/scratch/lakefile.toml && ! -f $work/scratch/lakefile.lean ]]; then
+    echo "== creating $work/scratch (Mathlib pinned to the tag for $tc; downloads the cache)"
+    cd "$work"
+    lake "+$tc" new scratch math
+fi
+
+cd "$work/scratch"
+echo "== scratch: toolchain $(cat lean-toolchain), mathlib $(grep -m1 '^rev' lakefile.toml 2>/dev/null || echo '?')"
+lake exe cache get
+echo "== lean-init ok"
